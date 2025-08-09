@@ -1,18 +1,61 @@
 ﻿version: 0.2
 
+env:
+  variables:
+    LAYER_BUCKET: horse-analyser-layers         # nazwa nowego bucketu S3
+    LAYER_KEY: lambda-layers/layer.zip          # ścieżka/klucz pliku warstwy w bucket
+    FUNCTION_NAME: horseAnalyserScraperFunction # nazwa Twojej funkcji Lambda
+    AWS_DEFAULT_REGION: eu-central-1            # region AWS
+
 phases:
   install:
     runtime-versions:
-      python: 3.11
+      python: 3.12
     commands:
-      - echo Installing dependencies
-      - pip install -r scraper/requirements.txt
+      - echo "Installing system dependencies…"
+      # jeśli CodeBuild nie ma zip/gcc, odkomentuj:
+      # - yum install -y zip unzip gcc
+
+  pre_build:
+    commands:
+      - echo "Cleaning previous artifacts…"
+      - rm -rf layers/python-dependencies/python
+      - rm -f layers/python-dependencies/layer.zip
+      - rm -f function.zip
+
   build:
     commands:
-      - echo Running tests
+      - echo "Installing Python dependencies into Lambda Layer…"
+      - mkdir -p layers/python-dependencies/python
+      - pip3 install --upgrade pip
+      - pip3 install -r scraper/requirements.txt -t layers/python-dependencies/python
+      - echo "Packaging Lambda Layer…"
+      - cd layers/python-dependencies
+      - zip -r9 layer.zip python
+      - cd ../..
+      - echo "Uploading Lambda Layer to S3…"
+      - aws s3 cp layers/python-dependencies/layer.zip s3://$LAYER_BUCKET/$LAYER_KEY --region $AWS_DEFAULT_REGION
+
+  post_build:
+    commands:
+      - echo "Running tests…"
       - pytest --maxfail=1 --disable-warnings -q
+      - echo "Packaging function code…"
+      - zip -r9 function.zip scraper/*.py
+      - echo "Deploying Lambda function…"
+      - aws lambda update-function-code \
+          --function-name $FUNCTION_NAME \
+          --zip-file fileb://function.zip \
+          --publish \
+          --region $AWS_DEFAULT_REGION
+      - echo "Build & deploy complete."
+
 artifacts:
   files:
     - appspec.yml
+    - layers/python-dependencies/layer.zip
+    - function.zip
     - scraper/**/*
     - scripts/**/*
+  discard-paths: yes
+
