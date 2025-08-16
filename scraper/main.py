@@ -11,6 +11,7 @@ import psycopg2
 import re
 from datetime import datetime, timedelta
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -188,9 +189,10 @@ def setup_chrome_driver():
         # Ścieżki do Chrome i ChromeDriver w Lambda
         chrome_options.binary_location = '/opt/chrome/chrome'
 
+        service = Service(
+            executable_path="/opt/chromedriver")
         driver = webdriver.Chrome(
-            executable_path='/opt/chromedriver',
-            options=chrome_options
+            service=service, options=options
         )
 
         # Ustaw timeout dla strony
