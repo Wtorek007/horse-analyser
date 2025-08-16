@@ -177,7 +177,8 @@ def setup_chrome_driver():
         chrome_options.add_argument('--disable-web-security')
         chrome_options.add_argument('--disable-features=VizDisplayCompositor')
         chrome_options.add_argument(
-            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        )
         chrome_options.add_argument('--disable-extensions')
         chrome_options.add_argument('--disable-plugins')
         chrome_options.add_argument('--disable-images')
@@ -189,11 +190,9 @@ def setup_chrome_driver():
         # Ścieżki do Chrome i ChromeDriver w Lambda
         chrome_options.binary_location = '/opt/chrome/chrome'
 
-        service = Service(
-            executable_path="/opt/chromedriver")
-        driver = webdriver.Chrome(
-            service=service, options=options
-        )
+        service = Service(executable_path="/opt/chromedriver")
+        # Poprawne przekazanie opcji do WebDriver
+        driver = webdriver.Chrome(service=service, options=chrome_options)
 
         # Ustaw timeout dla strony
         driver.set_page_load_timeout(30)
@@ -228,7 +227,6 @@ def connect_to_rds():
         conn.autocommit = False  # Używamy transakcji
 
         logger.info(f"Połączono z bazą danych RDS: {db_config['host']}")
-
         return conn
 
     except Exception as e:
@@ -240,7 +238,6 @@ def get_database_password():
     """
     Pobiera hasło do bazy danych z AWS Secrets Manager lub zmiennych środowiskowych
     """
-    # Sprawdź czy używamy Secrets Manager
     secret_name = os.environ.get('DB_SECRET_NAME')
 
     if secret_name:
@@ -251,7 +248,6 @@ def get_database_password():
 
             response = client.get_secret_value(SecretId=secret_name)
             secret = json.loads(response['SecretString'])
-
             return secret['password']
 
         except ClientError as e:
@@ -259,7 +255,7 @@ def get_database_password():
             # Fallback na zmienną środowiskową
             return os.environ.get('DB_PASSWORD')
     else:
-        # Użyj zmiennej środowiskowej
+        # Użyj zmiennej środowiskową
         return os.environ.get('DB_PASSWORD')
 
 
@@ -269,8 +265,6 @@ def scrape_single_url(driver, url, conn):
     """
     try:
         driver.get(url)
-
-        # Czekaj na załadowanie strony
         WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CLASS_NAME, "race-result"))
         )
@@ -278,10 +272,12 @@ def scrape_single_url(driver, url, conn):
 
         # Pobierz datę wyścigu
         try:
-            raw_date = clean(driver.find_element(
-                By.CSS_SELECTOR,
-                "#content > div.page-blocks > div > div > div > section > div.info > h2"
-            ).text)
+            raw_date = clean(
+                driver.find_element(
+                    By.CSS_SELECTOR,
+                    "#content > div.page-blocks > div > div > div > section > div.info > h2"
+                ).text
+            )
             race_date = extract_race_date(raw_date)
         except Exception as e:
             logger.warning(f"Nie można pobrać daty z {url}: {str(e)}")
@@ -295,7 +291,6 @@ def scrape_single_url(driver, url, conn):
         gonitwy = parse_gonitwy(soup, race_date)
 
         if gonitwy:
-            # Zapisz do bazy danych
             insert_to_rds(gonitwy, conn)
             return {'success': True, 'races_count': len(gonitwy)}
         else:
@@ -329,19 +324,15 @@ def extract_race_date(raw_text: str) -> str | None:
 
 
 def int_or_none(value: str) -> int | None:
-    """
-    Zwraca int jeśli w wartości są cyfry, w przeciwnym razie None.
-    """
+    """Zwraca int jeśli w wartości są cyfry, w przeciwnym razie None."""
     if not value:
         return None
-    digits = re.sub(r'[^\d]', '', value)
+    digits = re.sub(r'[^\\d]', '', value)
     return int(digits) if digits else None
 
 
 def parse_gonitwy(soup: BeautifulSoup, race_date: str) -> list[dict]:
-    """
-    Parsuje gonitwy z HTML (zachowana oryginalna logika)
-    """
+    """Parsuje gonitwy z HTML (zachowana oryginalna logika)"""
     gonitwy = []
     for race_div in soup.find_all('div', class_='race-result'):
         h3 = race_div.find('h3')
@@ -405,11 +396,11 @@ def insert_to_rds(gonitwy: list[dict], conn):
     Zapisuje gonitwy do bazy danych AWS RDS
     """
     INSERT_SQL = """
-                 INSERT INTO wyniki_gonitw (nazwa_gonitwy, dystans, opis, miejsce, nazwa_konia, jezdziec, nr_startowy, \
-                                            czas, temperatura, styl, odleglosci, stan_toru, data_wyscigu) \
-                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, \
-                         %s) ON CONFLICT (nazwa_gonitwy, data_wyscigu, nazwa_konia, jezdziec) DO NOTHING \
-                 """
+        INSERT INTO wyniki_gonitw (nazwa_gonitwy, dystans, opis, miejsce, nazwa_konia, jezdziec, nr_startowy,
+                                   czas, temperatura, styl, odleglosci, stan_toru, data_wyscigu)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (nazwa_gonitwy, data_wyscigu, nazwa_konia, jezdziec) DO NOTHING
+    """
 
     try:
         with conn.cursor() as cur:
@@ -438,16 +429,12 @@ def insert_to_rds(gonitwy: list[dict], conn):
                         )
                         if cur.rowcount > 0:
                             total_inserted += 1
-
                     except Exception as e:
                         logger.error(f"Błąd INSERT: {e} | Gonitwa={g['nazwa']} | Koń={kon['nazwa_konia']}")
                         conn.rollback()
                         raise
-
-            # Commit wszystkich zmian na raz
             conn.commit()
             logger.info(f"Zapisano {total_inserted} nowych rekordów do bazy")
-
     except Exception as e:
         logger.error(f"Błąd zapisu do bazy: {str(e)}")
         conn.rollback()
@@ -460,25 +447,19 @@ def update_race_day_after_scraping(last_processed_day):
     """
     try:
         s3 = boto3.client('s3')
-
-        # Aktualizuj plik konfiguracyjny
         config = {
             'next_race_day': last_processed_day + 1,
             'last_updated': datetime.now().isoformat(),
             'last_processed_day': last_processed_day
         }
-
         bucket_name = os.environ.get('CONFIG_BUCKET', 'horse-analyser-config')
-
         s3.put_object(
             Bucket=bucket_name,
             Key='race-config.json',
             Body=json.dumps(config),
             ContentType='application/json'
         )
-
         logger.info(f"Zaktualizowano next_race_day na {last_processed_day + 1}")
-
     except Exception as e:
         logger.error(f"Nie udało się zaktualizować konfiguracji: {e}")
 
@@ -488,18 +469,14 @@ def main():
     """
     Funkcja do testowania lokalnego (nie używana w Lambda)
     """
-    # Symulacja event i context dla testów lokalnych
     event = {}
     context = {}
-
-    # Ustaw zmienne środowiskowe dla testów lokalnych
     os.environ['RDS_ENDPOINT'] = 'horse-analyser-db.czwk8cqg2o63.eu-central-1.rds.amazonaws.com'
     os.environ['DB_NAME'] = 'postgres'
     os.environ['DB_USER'] = 'postgres'
     os.environ['DB_PASSWORD'] = 'twoje-haslo-z-secrets-manager'
     os.environ['DB_PORT'] = '5432'
-    os.environ['NEXT_RACE_DAY'] = '17'  # Następny dzień do scrapowania
-
+    os.environ['NEXT_RACE_DAY'] = '17'
     result = lambda_handler(event, context)
     print(json.dumps(result, indent=2))
 
